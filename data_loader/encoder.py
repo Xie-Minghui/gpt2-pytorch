@@ -17,7 +17,7 @@ class Encoder():
     def __init__(self, tokens2id, bpe_rank):
         self.tokens2id = tokens2id
         self.bpe_rank = bpe_rank
-        self.pat = re.compile(r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")`
+        self.pat = re.compile(r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
         self.bytes2unicode = bytes_to_unicode()
         self.unicode2bytes = {v:k for k, v in self.bytes2unicode}
 
