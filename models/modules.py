@@ -54,15 +54,88 @@ class Conv1D(nn.Modules):
 
 
 class FeedForwardNetwork(nn.Modules):
-    def __init__(self, d_model, hidden_dim, dropout):
+    def __init__(self, n_embed, hidden_dim, dropout):
         super().__init__()
-        self.c_fc = Conv1D(d_model, hidden_dim)
-        self.c_project = Conv1D(hidden_dim, d_model)
+        self.c_fc = Conv1D(n_embed, hidden_dim)
+        self.c_project = Conv1D(hidden_dim, n_embed)
         self.activation = gelu()
         self.dropout_layer = nn.Dropout(dropout)
 
     def forward(self, x):
         return self.dropout_layer(self.c_project(self.activation(self.c_fc(x))))
+
+
+class Attention(nn.Modules):
+
+    def __init__(self, n_embed=768, n_ctx=1024, scale=True):
+        super().__init__()
+        self.n_embed = n_embed
+        self.scale = scale
+        self.atten_head = 6
+
+        self.regester_buffer("bias", torch.tril(torch.ones(n_ctx, n_ctx)).view(1, 1, n_ctx, n_ctx))
+
+        self.c_atten = Conv1D(n_embed, n_embed*3)
+        self.c_project = Conv1D(n_embed, n_embed)
+
+        assert self.n_embed % self.atten_head == 0, "n_embed must mod atten_head"
+
+    # def split_heads(self, x, is_key=False):
+    #     x_new_shape = x.size()[:-1] + (self.atten_head, self.n_embed//self.atten_head)
+    #     x = x.view(*x_new_shape)
+    #     if is_key:
+    #         return x.permute(0, 2, 3, 1)  # (batch, head, head_features, seq_length)
+    #     else:
+    #         return x.permute(0, 2, 1, 3)  # (batch, head, seq_length, head_features)
+
+    def split_heads(self, x):
+        x_new_shape = x.size()[:-1] + (self.atten_head, self.n_embed//self.atten_head)
+        x = x.view(*x_new_shape)
+
+        return x.permute(0, 2, 1, 3)  # (batch, head, seq_length, head_features)
+
+    def merge_heads(self, x):
+        x = x.permute(0, 2, 1, 3).contiguous()
+        x_new_shape = x.size()[:-2] + (x.size(-2) * x.size(-1))
+
+        return x.view(*x_new_shape)
+
+    def mask_attn_weights(self, atten_weight):
+        start, end = atten_weight.size(-2), atten_weight.size(-1)
+        mask = self.bias[:, :, end-start:end, :end]  # mask的意义不是很清楚
+        atten_weight = atten_weight * mask - 1e10 * (1-b)
+
+        return atten_weight
+
+    def cal_attention(self, query, key, value):
+        atten_weight = torch.matmul(query, key.transpose(-2,-1))
+        if self.scale:
+            # atten_weight [batch, head, seq_length, seq_length]
+            atten_weight = atten_weight / math.sqrt(value.szie(-1))  # head_features
+        atten_weight = self.mask_attn_weights(atten_weight)
+        atten_weight = nn.Softmax(dim=-1)(atten_weight)
+
+        return torch.matmul(atten_weight, value)
+
+    def forward(self, x, layer_past=None):
+        x = self.c_atten(x)
+        query, key, value = x.split(self.n_embed, dim=2)
+        query, key, value = map(self.split_heads, (query, key, value))
+        # query = self.split_heads(query)
+        # key = self.split_heads(key)
+        # value = self.split_heads(value)
+
+        if layer_past:
+            key_past, value_past = layer_past[0].transpose(-2, -1), layer_past[1]
+            key = torch.cat((key, key_past), dim=-1)
+            value = torch.cat((value, value_past), dim=-1)
+        # Concatenate a sequence of tensors along a new dimension
+
+        out = self.cal_attention(query, key, value)
+        out = self.merge_heads(out)
+        out = self.c_project(out)
+
+        return out
 
 
 
