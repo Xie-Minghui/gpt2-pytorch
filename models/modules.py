@@ -11,6 +11,7 @@ file description:：
 import torch.nn as nn
 import torch
 import math
+import copy
 
 
 def gelu(x):
@@ -126,16 +127,16 @@ class Attention(nn.Modules):
         # value = self.split_heads(value)
 
         if layer_past:
-            key_past, value_past = layer_past[0].transpose(-2, -1), layer_past[1]
+            key_past, value_past = layer_past[0].transpose(-2, -1), layer_past[1]  # 为什么要添加过去的k,v值,而q不用
             key = torch.cat((key, key_past), dim=-1)
             value = torch.cat((value, value_past), dim=-1)
         # Concatenate a sequence of tensors along a new dimension
-
+        present = torch.stack((key, value))
         out = self.cal_attention(query, key, value)
         out = self.merge_heads(out)
         out = self.c_project(out)
 
-        return out
+        return out, present
 
 
 class TransformerDecoderBlock(nn.Modules):
@@ -147,10 +148,60 @@ class TransformerDecoderBlock(nn.Modules):
         self.layer_norm2 = LayerNorm(config.n_embed, config.layer_norm_epsilon)
 
     def forward(self, x, layer_past):
-        x = x + self.atten_layer(self.layer_norm1(x), layer_past=layer_past)
+        a, present = self.atten_layer(self.layer_norm1(x), layer_past=layer_past)
+        x = x + a
         x = x + self.ffn(self.layer_norm2(x))
 
         return x
+
+
+class GPT2Model(nn.Modules):
+    def __init__(self, config):
+        self.n_layer = config.n_layer
+        self.n_embed = config.n_embed
+
+        self.wte = nn.Embedding(config.vocab_size, config.n_embed)  # 文本嵌入向量
+        self.wpe = nn.Embedding(config.n_position, config.n_embed)  # 位置编码
+        block = TransformerDecoderBlock(config, scale=True)
+        self.blocks = nn.ModuleList([copy.deepcopy(block) for _ in range(config.n_layer)])
+        self.layer_norm = LayerNorm(config.n_embed, config.layer_norm_epsilon)
+
+    def forward(self, input_ids, position_ids=None, token_type_ids=None, past=None):
+
+        if past is None:
+            past_length = 0
+            past = [None] * self.n_layer
+        else:
+            past_length = past[0][0].size(-2)  # 这个是用来干啥
+
+        if position_ids is None:
+            position_ids = torch.arange(past_length, input_ids.size(-1) + past_length, dtype=torch.long,
+                                        device=input_ids.device)
+            position_ids = position_ids.unsqueeze(0).expand_as(input_ids)
+
+        input_ids = input_ids.view(-1, input_ids.size(-1))
+        position_ids = position_ids.view(-1, position_ids.size(-1))
+
+        input_embeds = self.wte(input_ids)
+        position_embeds = self.wpe(position_ids)
+        if token_type_ids is not None:
+            token_type_ids = token_type_ids.view(-1, token_type_ids.size(-1))
+            token_type_embeds = self.wte(token_type_ids)
+        else:
+            token_type_embeds = 0
+
+        hidden_ids = input_embeds + position_embeds + token_type_embeds
+
+        presents = []
+        for block, layer_past in zip(self.blocks, past):
+            hidden_states, present = block(hidden_ids, layer_past)
+            presents.append(present)
+
+        hidden_states = self.layer_norm(hidden_states)  # [1, seq_length, n_embed]
+
+        return hidden_states, presents
+
+
 
 
 
