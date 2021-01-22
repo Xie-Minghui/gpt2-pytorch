@@ -71,7 +71,7 @@ class Attention(nn.Modules):
         super().__init__()
         self.n_embed = n_embed
         self.scale = scale
-        self.atten_head = 6
+        self.atten_head = 12
 
         self.regester_buffer("bias", torch.tril(torch.ones(n_ctx, n_ctx)).view(1, 1, n_ctx, n_ctx))
 
@@ -136,6 +136,21 @@ class Attention(nn.Modules):
         out = self.c_project(out)
 
         return out
+
+
+class TransformerDecoderBlock(nn.Modules):
+    def __init__(self, config, scale=True):
+        super().__init__()
+        self.layer_norm1 = LayerNorm(config.n_embed, config.layer_norm_epsilon)
+        self.atten_layer = Attention(config.n_embed, config.n_ctx, config, scale)
+        self.ffn = FeedForwardNetwork(config.n_embed, 4*config.n_embed)
+        self.layer_norm2 = LayerNorm(config.n_embed, config.layer_norm_epsilon)
+
+    def forward(self, x, layer_past):
+        x = x + self.atten_layer(self.layer_norm1(x), layer_past=layer_past)
+        x = x + self.ffn(self.layer_norm2(x))
+
+        return x
 
 
 
