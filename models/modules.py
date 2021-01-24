@@ -104,7 +104,7 @@ class Attention(nn.Modules):
     def mask_attn_weights(self, atten_weight):
         start, end = atten_weight.size(-2), atten_weight.size(-1)
         mask = self.bias[:, :, end-start:end, :end]  # mask的意义不是很清楚
-        atten_weight = atten_weight * mask - 1e10 * (1-b)
+        atten_weight = atten_weight * mask - 1e10 * (1-mask)
 
         return atten_weight
 
@@ -116,7 +116,7 @@ class Attention(nn.Modules):
         atten_weight = self.mask_attn_weights(atten_weight)
         atten_weight = nn.Softmax(dim=-1)(atten_weight)
 
-        return torch.matmul(atten_weight, value)
+        return torch.matmul(atten_weight, value)  # 计算注意力向量
 
     def forward(self, x, layer_past=None):
         x = self.c_atten(x)
@@ -201,6 +201,37 @@ class GPT2Model(nn.Modules):
 
         return hidden_states, presents
 
+
+class GPT2LMHeadModel(nn.Modules):
+    def __init__(self, embed_weights):
+        super().__init__()
+        self.share_embed_weight(embed_weights)
+
+    def share_embed_weight(self, embed_weights):
+        embed_shape = embed_weights.shape
+        self.decoder = nn.Linear(embed_shape[1], embed_shape[0])
+        self.decoder.weights = embed_weights
+
+    def forward(self, hidden_states):
+        return self.decoder(hidden_states)
+
+
+class GPT2GeneratorModel(nn.Modules):
+    def __init(self, config):
+        super().__init__()
+        self.gpt2 = GPT2Model(config)
+        self.decoder = GPT2LMHeadModel(self.gpt2.wte.weight)
+
+    def forward(self, input_ids, position_ids=None, token_type_ids=None, lm_labels=None, past=None):
+        hidden_states, presents = self.gpt2(input_ids, position_ids, token_type_ids, past)
+        lm_logits = self.decoder(hidden_states)
+
+        if lm_labels:
+            loss_func = nn.CrossEntropyLoss(ignore_index=-1)
+            loss = loss_func(lm_logits.view(-1, lm_logits.size(-1)), lm_labels)
+            return loss
+
+        return lm_logits, presents
 
 
 
