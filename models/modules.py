@@ -2,7 +2,7 @@
 
 # @Author  : xmh
 # @Time    : 2021/1/22 9:01
-# @File    : modules.py
+# @File    : Module.py
 
 """
 file description:：
@@ -12,13 +12,15 @@ import torch.nn as nn
 import torch
 import math
 import copy
+import torch.nn.functional as F
+from tqdm import trange
 
 
 def gelu(x):
     return 0.5 * x * (1 + torch.tanh(torch.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
 
 
-class LayerNorm(nn.Modules):
+class LayerNorm(nn.Module):
 
     def __init__(self, normalized_shape, epsilon=1e-12):
         super().__init__()
@@ -33,7 +35,7 @@ class LayerNorm(nn.Modules):
         return x * self.weights + self.bias
 
 
-class Conv1D(nn.Modules):
+class Conv1D(nn.Module):
     '''
     The CONV1D layer can be thought of as a LINEAR layer itself. Essentially, it is casting an initial tensor x
      (having the final dimension of x.size(-1)) being passed to it to have a final dimension of size self.output_dim
@@ -54,7 +56,7 @@ class Conv1D(nn.Modules):
         return x
 
 
-class FeedForwardNetwork(nn.Modules):
+class FeedForwardNetwork(nn.Module):
     def __init__(self, n_embed, hidden_dim, dropout):
         super().__init__()
         self.c_fc = Conv1D(n_embed, hidden_dim)
@@ -66,15 +68,15 @@ class FeedForwardNetwork(nn.Modules):
         return self.dropout_layer(self.c_project(self.activation(self.c_fc(x))))
 
 
-class Attention(nn.Modules):
+class Attention(nn.Module):
 
-    def __init__(self, n_embed=768, n_ctx=1024, scale=True):
+    def __init__(self, n_embed=768, n_ctx=1024, n_head=6, scale=True):
         super().__init__()
         self.n_embed = n_embed
         self.scale = scale
-        self.atten_head = 12
+        self.atten_head = n_head
 
-        self.regester_buffer("bias", torch.tril(torch.ones(n_ctx, n_ctx)).view(1, 1, n_ctx, n_ctx))
+        self.regester_buffer("bias", torch.tril(torch.ones(n_ctx, n_ctx)).view(1, 1, n_ctx, n_ctx))  # mask
 
         self.c_atten = Conv1D(n_embed, n_embed*3)
         self.c_project = Conv1D(n_embed, n_embed)
@@ -109,10 +111,10 @@ class Attention(nn.Modules):
         return atten_weight
 
     def cal_attention(self, query, key, value):
-        atten_weight = torch.matmul(query, key.transpose(-2,-1))
+        atten_weight = torch.matmul(query, key.transpose(-2, -1))
         if self.scale:
-            # atten_weight [batch, head, seq_length, seq_length]
-            atten_weight = atten_weight / math.sqrt(value.szie(-1))  # head_features
+            # atten_weight [batch, head]
+            atten_weight = atten_weight / math.sqrt(key.szie(-1))  # head_features
         atten_weight = self.mask_attn_weights(atten_weight)
         atten_weight = nn.Softmax(dim=-1)(atten_weight)
 
@@ -139,15 +141,15 @@ class Attention(nn.Modules):
         return out, present
 
 
-class TransformerDecoderBlock(nn.Modules):
+class TransformerDecoderBlock(nn.Module):
     def __init__(self, config, scale=True):
         super().__init__()
         self.layer_norm1 = LayerNorm(config.n_embed, config.layer_norm_epsilon)
-        self.atten_layer = Attention(config.n_embed, config.n_ctx, config, scale)
+        self.atten_layer = Attention(config.n_embed, config.n_ctx, config.n_head, scale)
         self.ffn = FeedForwardNetwork(config.n_embed, 4*config.n_embed)
         self.layer_norm2 = LayerNorm(config.n_embed, config.layer_norm_epsilon)
 
-    def forward(self, x, layer_past):
+    def forward(self, x, layer_past=None):
         a, present = self.atten_layer(self.layer_norm1(x), layer_past=layer_past)
         x = x + a
         x = x + self.ffn(self.layer_norm2(x))
@@ -155,7 +157,7 @@ class TransformerDecoderBlock(nn.Modules):
         return x
 
 
-class GPT2Model(nn.Modules):
+class GPT2Model(nn.Module):
     def __init__(self, config):
         self.n_layer = config.n_layer
         self.n_embed = config.n_embed
@@ -172,7 +174,7 @@ class GPT2Model(nn.Modules):
             past_length = 0
             past = [None] * self.n_layer
         else:
-            past_length = past[0][0].size(-2)  # 这个是用来干啥
+            past_length = past[0][0].size(-2)  # 当前生成文本的长度（包括出事文本）
 
         if position_ids is None:
             position_ids = torch.arange(past_length, input_ids.size(-1) + past_length, dtype=torch.long,
@@ -202,7 +204,7 @@ class GPT2Model(nn.Modules):
         return hidden_states, presents
 
 
-class GPT2LMHeadModel(nn.Modules):
+class GPT2LMHeadModel(nn.Module):
     def __init__(self, embed_weights):
         super().__init__()
         self.share_embed_weight(embed_weights)
@@ -210,17 +212,40 @@ class GPT2LMHeadModel(nn.Modules):
     def share_embed_weight(self, embed_weights):
         embed_shape = embed_weights.shape
         self.decoder = nn.Linear(embed_shape[1], embed_shape[0])
-        self.decoder.weights = embed_weights
+        self.decoder.weight = embed_weights
 
     def forward(self, hidden_states):
         return self.decoder(hidden_states)
 
 
-class GPT2GeneratorModel(nn.Modules):
+class GPT2GeneratorModel(nn.Module):
     def __init(self, config):
         super().__init__()
         self.gpt2 = GPT2Model(config)
         self.decoder = GPT2LMHeadModel(self.gpt2.wte.weight)
+
+    def generate_sequence(self, context=None, start_token=None, generate_length=256, topk_num=40, sample=True):
+
+        if start_token is None:
+            assert context is not None, "Specify exactly one of start_token and context!"
+        else:
+            assert context is None, "Specify exactly one of start_token and"
+            context = torch.full((1,), start_token, dtype=torch.long)
+
+        prev, output = context, context
+        past = None
+        with torch.no_grad():
+            for _ in trange(generate_length):
+                logits, past = self.forward(prev, past)
+                logits, _ = torch.topk(logits, topk_num)
+                log_soft = F.softmax(logits, dim=-1)
+                if sample:
+                    prev = torch.multinomial(log_soft, num_sample=1)
+                else:
+                    _, prev = torch.topk(log_soft, k=1, dim=-1)
+                output = torch.cat((output, prev), dim=1)
+
+        return output
 
     def forward(self, input_ids, position_ids=None, token_type_ids=None, lm_labels=None, past=None):
         hidden_states, presents = self.gpt2(input_ids, position_ids, token_type_ids, past)
@@ -232,6 +257,7 @@ class GPT2GeneratorModel(nn.Modules):
             return loss
 
         return lm_logits, presents
+
 
 
 

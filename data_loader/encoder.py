@@ -30,7 +30,7 @@ class Encoder():
         self.bpe_ranks = bpe_ranks
         self.pat = re.compile(r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
         self.bytes2unicode = bytes_to_unicode()
-        self.unicode2bytes = {v:k for k, v in self.bytes2unicode}
+        self.unicode2bytes = {v: k for k, v in self.bytes2unicode}
         self.cache = {}
 
     def bpe(self, token):
@@ -65,8 +65,7 @@ class Encoder():
                 else:
                     new_word.extend(word[i])
                     i += 1
-            new_word = tuple(new_word)
-            word = new_word
+            word = tuple(new_word)
 
             if len(word) == 1:
                 break
@@ -87,12 +86,15 @@ class Encoder():
         return bpe_tokens_id
 
 
-with open('../data/encoder.json', 'r') as f:
-    tokens2id = json.load(f)
+def get_encoder():
+    with open('../data/encoder.json', 'r') as f:
+        tokens2id = json.load(f)
 
-with open('vocvab.bpe', 'r') as f:
-    bpe_data = f.read()
-    bpe_merges = [tuple(merge_str.split()) for merge_str in bpe_data.split('\n')[1:-1]]
-    bpe_ranks = dict(zip(bpe_merges, range(len(bpe_merges))))
+    with open('vocvab.bpe', 'r') as f:
+        bpe_data = f.read()
+        bpe_merges = [tuple(merge_str.split()) for merge_str in bpe_data.split('\n')[1:-1]]
+        bpe_ranks = dict(zip(bpe_merges, range(len(bpe_merges))))
+
+    return Encoder(tokens2id, bpe_ranks)
 
 
