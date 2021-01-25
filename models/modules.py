@@ -17,7 +17,7 @@ from tqdm import trange
 
 
 def gelu(x):
-    return 0.5 * x * (1 + torch.tanh(torch.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
+    return 0.5 * x * (1 + torch.tanh(math.sqrt(2 / math.pi) * (x + 0.044715 * torch.pow(x, 3))))
 
 
 class LayerNorm(nn.Module):
@@ -61,8 +61,8 @@ class FeedForwardNetwork(nn.Module):
         super().__init__()
         self.c_fc = Conv1D(n_embed, hidden_dim)
         self.c_project = Conv1D(hidden_dim, n_embed)
-        self.activation = gelu()
-        self.dropout_layer = nn.Dropout(dropout)
+        self.activation = gelu
+        self.dropout_layer = nn.Dropout(dropout)  # 测试的时候需要去掉
 
     def forward(self, x):
         return self.dropout_layer(self.c_project(self.activation(self.c_fc(x))))
@@ -76,7 +76,7 @@ class Attention(nn.Module):
         self.scale = scale
         self.atten_head = n_head
 
-        self.regester_buffer("bias", torch.tril(torch.ones(n_ctx, n_ctx)).view(1, 1, n_ctx, n_ctx))  # mask
+        self.register_buffer("bias", torch.tril(torch.ones(n_ctx, n_ctx)).view(1, 1, n_ctx, n_ctx))  # mask
 
         self.c_atten = Conv1D(n_embed, n_embed*3)
         self.c_project = Conv1D(n_embed, n_embed)
@@ -99,7 +99,7 @@ class Attention(nn.Module):
 
     def merge_heads(self, x):
         x = x.permute(0, 2, 1, 3).contiguous()
-        x_new_shape = x.size()[:-2] + (x.size(-2) * x.size(-1))
+        x_new_shape = x.size()[:-2] + (x.size(-2) * x.size(-1),)
 
         return x.view(*x_new_shape)
 
@@ -114,7 +114,7 @@ class Attention(nn.Module):
         atten_weight = torch.matmul(query, key.transpose(-2, -1))
         if self.scale:
             # atten_weight [batch, head]
-            atten_weight = atten_weight / math.sqrt(key.szie(-1))  # head_features
+            atten_weight = atten_weight / math.sqrt(key.size(-1))  # head_features
         atten_weight = self.mask_attn_weights(atten_weight)
         atten_weight = nn.Softmax(dim=-1)(atten_weight)
 
@@ -128,10 +128,10 @@ class Attention(nn.Module):
         # key = self.split_heads(key)
         # value = self.split_heads(value)
 
-        if layer_past:
-            key_past, value_past = layer_past[0].transpose(-2, -1), layer_past[1]  # 为什么要添加过去的k,v值,而q不用
-            key = torch.cat((key, key_past), dim=-1)
-            value = torch.cat((value, value_past), dim=-1)
+        if layer_past is not None:  # tensor无法判断真假
+            key_past, value_past = layer_past[0], layer_past[1]  # 为什么要添加过去的k,v值,而q不用
+            key = torch.cat((key_past, key), dim=-2)
+            value = torch.cat((value_past, value), dim=-2)
         # Concatenate a sequence of tensors along a new dimension
         present = torch.stack((key, value))
         out = self.cal_attention(query, key, value)
@@ -146,7 +146,7 @@ class TransformerDecoderBlock(nn.Module):
         super().__init__()
         self.layer_norm1 = LayerNorm(config.n_embed, config.layer_norm_epsilon)
         self.atten_layer = Attention(config.n_embed, config.n_ctx, config.n_head, scale)
-        self.ffn = FeedForwardNetwork(config.n_embed, 4*config.n_embed)
+        self.ffn = FeedForwardNetwork(config.n_embed, 4*config.n_embed, config.dropout_rate)
         self.layer_norm2 = LayerNorm(config.n_embed, config.layer_norm_epsilon)
 
     def forward(self, x, layer_past=None):
@@ -154,11 +154,12 @@ class TransformerDecoderBlock(nn.Module):
         x = x + a
         x = x + self.ffn(self.layer_norm2(x))
 
-        return x
+        return x, present
 
 
 class GPT2Model(nn.Module):
     def __init__(self, config):
+        super().__init__()
         self.n_layer = config.n_layer
         self.n_embed = config.n_embed
 
@@ -219,15 +220,16 @@ class GPT2LMHeadModel(nn.Module):
 
 
 class GPT2GeneratorModel(nn.Module):
-    def __init(self, config):
+    def __init__(self, config):
         super().__init__()
         self.gpt2 = GPT2Model(config)
         self.decoder = GPT2LMHeadModel(self.gpt2.wte.weight)
 
     def generate_sequence(self, context=None, start_token=None, generate_length=256, topk_num=40, sample=True):
-
+        self.train(False)
         if start_token is None:
             assert context is not None, "Specify exactly one of start_token and context!"
+            context = torch.tensor(context, dtype=torch.long).unsqueeze(0)
         else:
             assert context is None, "Specify exactly one of start_token and"
             context = torch.full((1,), start_token, dtype=torch.long)
@@ -236,16 +238,22 @@ class GPT2GeneratorModel(nn.Module):
         past = None
         with torch.no_grad():
             for _ in trange(generate_length):
-                logits, past = self.forward(prev, past)
+                logits, past = self.forward(prev, past=past)
+                logits = logits[:, -1, :]
                 logits, _ = torch.topk(logits, topk_num)
                 log_soft = F.softmax(logits, dim=-1)
                 if sample:
-                    prev = torch.multinomial(log_soft, num_sample=1)
+                    prev = torch.multinomial(log_soft, num_samples=1)
                 else:
                     _, prev = torch.topk(log_soft, k=1, dim=-1)
                 output = torch.cat((output, prev), dim=1)
 
         return output
+
+    def set_tied(self):
+        """ Make sure we are sharing the embeddings
+        """
+        self.decoder.share_embed_weight(self.gpt2.wte.weight)
 
     def forward(self, input_ids, position_ids=None, token_type_ids=None, lm_labels=None, past=None):
         hidden_states, presents = self.gpt2(input_ids, position_ids, token_type_ids, past)

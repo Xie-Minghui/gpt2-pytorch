@@ -27,10 +27,11 @@ class Encoder():
 
     def __init__(self, tokens2id, bpe_ranks):
         self.tokens2id = tokens2id
+        self.id2token = {v: k for k, v in tokens2id.items()}
         self.bpe_ranks = bpe_ranks
         self.pat = re.compile(r"""'s|'t|'re|'ve|'m|'ll|'d| ?\p{L}+| ?\p{N}+| ?[^\s\p{L}\p{N}]+|\s+(?!\S)|\s+""")
         self.bytes2unicode = bytes_to_unicode()
-        self.unicode2bytes = {v: k for k, v in self.bytes2unicode}
+        self.unicode2bytes = {v: k for k, v in self.bytes2unicode.items()}
         self.cache = {}
 
     def bpe(self, token):
@@ -85,12 +86,17 @@ class Encoder():
             bpe_tokens_id.extend([self.tokens2id[token] for token in self.bpe(tokens).split(' ')])
         return bpe_tokens_id
 
+    def decode(self, token_ids):
+        text = ''.join([self.id2token[token] for token in token_ids])
+        text = bytearray([self.unicode2bytes[c] for c in text]).decode('utf-8', errors='replace')
+        return text
+
 
 def get_encoder():
     with open('../data/encoder.json', 'r') as f:
         tokens2id = json.load(f)
 
-    with open('vocvab.bpe', 'r') as f:
+    with open('../data/vocab.bpe', 'r') as f:
         bpe_data = f.read()
         bpe_merges = [tuple(merge_str.split()) for merge_str in bpe_data.split('\n')[1:-1]]
         bpe_ranks = dict(zip(bpe_merges, range(len(bpe_merges))))

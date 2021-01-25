@@ -37,7 +37,7 @@ def text_generator(state_dict):
     args = parse_args()
     context = args.text
     if args.generate_length == -1:
-        args.generate_length == config.n_ctx // 4
+        args.generate_length = config.n_ctx // 4
 
     enc = get_encoder()
 
@@ -52,8 +52,8 @@ def text_generator(state_dict):
                                           generate_length=args.generate_length
                                           )
 
-    output = output[:,len(context_ids):]
-
+    output = output[0, len(context_ids):].tolist()
+    output = enc.decode(output)
     print('='*40 + ' SAMPLE ' + '='*40)
     print(output)
 
