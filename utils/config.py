@@ -15,7 +15,7 @@ class GPT2Config():
                  n_position=1024,
                  n_embed=768,
                  n_head=12,
-                 n_layer=6,
+                 n_layer=12,
                  dropout_rate=0.1,
                  layer_norm_epsilon=1e-5
                  ):

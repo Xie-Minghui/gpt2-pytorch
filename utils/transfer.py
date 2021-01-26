@@ -22,43 +22,38 @@ logger = logging.getLogger(__name__)
 def load_weight(model, state_dict):
     old_keys = []
     new_keys = []
+    cnt = 0
     for key in state_dict.keys():
-        new_key = None
-        if key.endswith(".g"):
-            new_key = key[:-2] + ".weight"
-        elif key.endswith(".b"):
-            new_key = key[:-2] + ".bias"
-        elif key.endswith(".w"):
-            new_key = key[:-2] + ".weight"
-        if new_key:
-            old_keys.append(key)
+
+        if 'h.' in key:
+            new_key = key.replace('h', 'blocks',1)
+            new_key = new_key.replace('ln_', 'layer_norm',1)
+            new_key = new_key.replace('attn', 'atten_layer', 1)
+            new_key = new_key.replace('c_attn', 'c_atten', 1)
+            new_key = new_key.replace('c_proj', 'c_project', 1)
+            new_key = new_key.replace('mlp', 'ffn')
             new_keys.append(new_key)
+            old_keys.append(key)
+
+        if 'ln_f' in key:
+            new_key = key.replace('ln_f', 'layer_norm')
+            new_keys.append(new_key)
+            old_keys.append(key)
+
     for old_key, new_key in zip(old_keys, new_keys):
         state_dict[new_key] = state_dict.pop(old_key)
 
-    missing_keys = []
-    unexpected_keys = []
-    error_msgs = []
-    # copy state_dict so _load_from_state_dict can modify it
-    metadata = getattr(state_dict, "_metadata", None)
-    state_dict = state_dict.copy()
-    if metadata is not None:
-        state_dict._metadata = metadata
-
-    def load(module, prefix=""):
-        local_metadata = {} if metadata is None else metadata.get(prefix[:-1], {})
-        module._load_from_state_dict(
-            state_dict, prefix, local_metadata, True, missing_keys, unexpected_keys, error_msgs
-        )
-        for name, child in module._modules.items():
-            if child is not None:
-                load(child, prefix + name + ".")
-
-    start_model = model
-    if hasattr(model, "transformer") and all(not s.startswith('transformer.') for s in state_dict.keys()):
-        start_model = model.transformer
-    load(start_model, prefix="")
-
-    # Make sure we are still sharing the output and input embeddings after loading weights
+    model_dict = model.state_dict()
+    # pretrained_dict = {k: v for k, v in state_dict.items() if k in model_dict}
+    pretrained_dict = {}
+    for k, v in state_dict.items():
+        k = 'gpt2.' + k
+        if k in model_dict:
+            cnt += 1
+            pretrained_dict[k] = v
+        else:
+            print(k)
+    model_dict.update(pretrained_dict)
+    model.load_state_dict(model_dict)
     model.set_tied()
-    return model
+    model.eval()

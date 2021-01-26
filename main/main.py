@@ -46,7 +46,6 @@ def text_generator(state_dict):
     gpt2_model = GPT2GeneratorModel(config)
 
     load_weight(gpt2_model, state_dict)
-
     output = gpt2_model.generate_sequence(context_ids,
                                           start_token=enc.tokens2id['<|endoftext|>'] if args.unconditional else None,
                                           generate_length=args.generate_length

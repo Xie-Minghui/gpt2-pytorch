@@ -24,7 +24,7 @@ class LayerNorm(nn.Module):
 
     def __init__(self, normalized_shape, epsilon=1e-12):
         super().__init__()
-        self.weights = nn.Parameter(torch.ones(normalized_shape))
+        self.weight = nn.Parameter(torch.ones(normalized_shape))
         self.bias = nn.Parameter(torch.zeros(normalized_shape))
         self.epsilon = epsilon
 
@@ -32,7 +32,7 @@ class LayerNorm(nn.Module):
         x_expected = x.mean(-1, keepdims=True)
         x_var = (x - x_expected).pow(2).mean(-1, keepdims=True)
         x = (x - x_expected) / torch.sqrt(x_var+self.epsilon)
-        return x * self.weights + self.bias
+        return x * self.weight + self.bias
 
 
 class Conv1D(nn.Module):
@@ -44,14 +44,14 @@ class Conv1D(nn.Module):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
-        self.weights = torch.empty(input_dim, output_dim)
-        nn.init.normal_(self.weights, std=0.02)
-        self.weights = nn.Parameter(self.weights)
+        self.weight = torch.empty(input_dim, output_dim)
+        nn.init.normal_(self.weight, std=0.02)
+        self.weight = nn.Parameter(self.weight)
         self.bias = nn.Parameter(torch.zeros(self.output_dim))
 
     def forward(self, x):
         size_out = x.size()[:-1] + (self.output_dim,)
-        x = torch.addmm(self.bias, x.view(-1, self.input_dim), self.weights)
+        x = torch.addmm(self.bias, x.view(-1, self.input_dim), self.weight)
         x = x.view(*size_out)
         return x
 
@@ -103,7 +103,7 @@ class Attention(nn.Module):
 
         return x.view(*x_new_shape)
 
-    def mask_attn_weights(self, atten_weight):
+    def mask_attn_weight(self, atten_weight):
         start, end = atten_weight.size(-2), atten_weight.size(-1)
         mask = self.bias[:, :, end-start:end, :end]  # mask的意义不是很清楚
         atten_weight = atten_weight * mask - 1e10 * (1-mask)
@@ -115,7 +115,7 @@ class Attention(nn.Module):
         if self.scale:
             # atten_weight [batch, head]
             atten_weight = atten_weight / math.sqrt(key.size(-1))  # head_features
-        atten_weight = self.mask_attn_weights(atten_weight)
+        atten_weight = self.mask_attn_weight(atten_weight)
         atten_weight = nn.Softmax(dim=-1)(atten_weight)
 
         return torch.matmul(atten_weight, value)  # 计算注意力向量
@@ -175,7 +175,7 @@ class GPT2Model(nn.Module):
             past_length = 0
             past = [None] * self.n_layer
         else:
-            past_length = past[0][0].size(-2)  # 当前生成文本的长度（包括出事文本）
+            past_length = past[0][0].size(-2)  # 当前生成文本的长度（包括初始文本）
 
         if position_ids is None:
             position_ids = torch.arange(past_length, input_ids.size(-1) + past_length, dtype=torch.long,
@@ -206,14 +206,14 @@ class GPT2Model(nn.Module):
 
 
 class GPT2LMHeadModel(nn.Module):
-    def __init__(self, embed_weights):
+    def __init__(self, embed_weight):
         super().__init__()
-        self.share_embed_weight(embed_weights)
+        self.share_embed_weight(embed_weight)
 
-    def share_embed_weight(self, embed_weights):
-        embed_shape = embed_weights.shape
-        self.decoder = nn.Linear(embed_shape[1], embed_shape[0])
-        self.decoder.weight = embed_weights
+    def share_embed_weight(self, embed_weight):
+        embed_shape = embed_weight.shape
+        self.decoder = nn.Linear(embed_shape[1], embed_shape[0], bias=False)
+        self.decoder.weight = embed_weight
 
     def forward(self, hidden_states):
         return self.decoder(hidden_states)
