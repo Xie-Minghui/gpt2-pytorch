@@ -66,8 +66,8 @@ class Encoder():
                 else:
                     new_word.extend(word[i])
                     i += 1
-            word = tuple(new_word)
-
+            new_word = tuple(new_word)
+            word = new_word
             if len(word) == 1:
                 break
             else:

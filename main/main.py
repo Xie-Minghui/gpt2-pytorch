@@ -22,7 +22,7 @@ import sys
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-t', '--text', required=False, default='i am a boy,')
+    parser.add_argument('-t', '--text', required=False, default='i am a boy')
     parser.add_argument('-b', '--bsz', type=int, default=1)
     parser.add_argument('-gl', '--generate_length', type=int, default=-1)
     parser.add_argument('--unconditional', action='store_true', help='If true, unconditional generation.')
@@ -37,7 +37,7 @@ def text_generator(state_dict):
     args = parse_args()
     context = args.text
     if args.generate_length == -1:
-        args.generate_length = config.n_ctx // 4
+        args.generate_length = config.n_ctx // 2
 
     enc = get_encoder()
 

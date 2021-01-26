@@ -32,7 +32,7 @@ class LayerNorm(nn.Module):
         x_expected = x.mean(-1, keepdims=True)
         x_var = (x - x_expected).pow(2).mean(-1, keepdims=True)
         x = (x - x_expected) / torch.sqrt(x_var+self.epsilon)
-        return x * self.weight + self.bias
+        return self.weight * x + self.bias
 
 
 class Conv1D(nn.Module):
@@ -51,13 +51,13 @@ class Conv1D(nn.Module):
 
     def forward(self, x):
         size_out = x.size()[:-1] + (self.output_dim,)
-        x = torch.addmm(self.bias, x.view(-1, self.input_dim), self.weight)
+        x = torch.addmm(self.bias, x.view(-1, x.size(-1)), self.weight)  # self.input_dim
         x = x.view(*size_out)
         return x
 
 
 class FeedForwardNetwork(nn.Module):
-    def __init__(self, n_embed, hidden_dim, dropout):
+    def __init__(self, n_embed, hidden_dim, dropout=0.1):
         super().__init__()
         self.c_fc = Conv1D(n_embed, hidden_dim)
         self.c_project = Conv1D(hidden_dim, n_embed)
@@ -65,12 +65,12 @@ class FeedForwardNetwork(nn.Module):
         self.dropout_layer = nn.Dropout(dropout)  # 测试的时候需要去掉
 
     def forward(self, x):
-        return self.dropout_layer(self.c_project(self.activation(self.c_fc(x))))
+        return self.c_project(self.activation(self.c_fc(x)))
 
 
 class Attention(nn.Module):
 
-    def __init__(self, n_embed=768, n_ctx=1024, n_head=6, scale=True):
+    def __init__(self, n_embed=768, n_ctx=1024, n_head=6, scale=False):
         super().__init__()
         self.n_embed = n_embed
         self.scale = scale
@@ -114,7 +114,7 @@ class Attention(nn.Module):
         atten_weight = torch.matmul(query, key.transpose(-2, -1))
         if self.scale:
             # atten_weight [batch, head]
-            atten_weight = atten_weight / math.sqrt(key.size(-1))  # head_features
+            atten_weight = atten_weight / math.sqrt(value.size(-1))  # head_features
         atten_weight = self.mask_attn_weight(atten_weight)
         atten_weight = nn.Softmax(dim=-1)(atten_weight)
 
@@ -197,12 +197,12 @@ class GPT2Model(nn.Module):
 
         presents = []
         for block, layer_past in zip(self.blocks, past):
-            hidden_states, present = block(hidden_ids, layer_past)
+            hidden_ids, present = block(hidden_ids, layer_past)  # hidden_ids要跟着改变，翻了与GLMP一样的错误
             presents.append(present)
 
-        hidden_states = self.layer_norm(hidden_states)  # [1, seq_length, n_embed]
+        hidden_ids = self.layer_norm(hidden_ids)  # [1, seq_length, n_embed]
 
-        return hidden_states, presents
+        return hidden_ids, presents
 
 
 class GPT2LMHeadModel(nn.Module):
@@ -225,6 +225,13 @@ class GPT2GeneratorModel(nn.Module):
         self.gpt2 = GPT2Model(config)
         self.decoder = GPT2LMHeadModel(self.gpt2.wte.weight)
 
+    def top_k_logits(self, logits, k):
+        if k == 0:
+            return logits
+        values, _ = torch.topk(logits, k)
+        min_values = values[:, -1].unsqueeze(1)
+        return torch.where(logits < min_values, torch.ones_like(logits, dtype=logits.dtype) * -1e10, logits)
+
     def generate_sequence(self, context=None, start_token=None, generate_length=256, topk_num=40, sample=True):
         self.train(False)
         if start_token is None:
@@ -240,7 +247,8 @@ class GPT2GeneratorModel(nn.Module):
             for _ in trange(generate_length):
                 logits, past = self.forward(prev, past=past)
                 logits = logits[:, -1, :]
-                logits, _ = torch.topk(logits, topk_num)
+                logits = self.top_k_logits(logits, topk_num)
+                # logits ,_ = torch.topk(logits, topk_num)  # 这个会输出一对乱码
                 log_soft = F.softmax(logits, dim=-1)
                 if sample:
                     prev = torch.multinomial(log_soft, num_samples=1)

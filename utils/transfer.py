@@ -51,8 +51,6 @@ def load_weight(model, state_dict):
         if k in model_dict:
             cnt += 1
             pretrained_dict[k] = v
-        else:
-            print(k)
     model_dict.update(pretrained_dict)
     model.load_state_dict(model_dict)
     model.set_tied()
