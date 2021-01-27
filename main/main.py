@@ -1,3 +1,11 @@
+'''
+Author: xmh
+Date: 2021-01-24 20:21:07
+LastEditors: xmh
+LastEditTime: 2021-01-27 10:47:25
+Description: 
+FilePath: \gpt2-pytorch\main\main.py
+'''
 # -*- coding: utf-8 -*-
 
 # @Author  : xmh
@@ -22,7 +30,7 @@ import sys
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-t', '--text', required=False, default='i am a boy')
+    parser.add_argument('-t', '--text', required=False, default='I am a boy')
     parser.add_argument('-b', '--bsz', type=int, default=1)
     parser.add_argument('-gl', '--generate_length', type=int, default=-1)
     parser.add_argument('--unconditional', action='store_true', help='If true, unconditional generation.')
@@ -37,7 +45,7 @@ def text_generator(state_dict):
     args = parse_args()
     context = args.text
     if args.generate_length == -1:
-        args.generate_length = config.n_ctx // 2
+        args.generate_length = config.n_ctx // 4
 
     enc = get_encoder()
 
@@ -58,6 +66,7 @@ def text_generator(state_dict):
 
 
 if __name__ == '__main__':
+    
     if os.path.exists('../gpt2-pytorch_model.bin'):
         state_dict = torch.load('../gpt2-pytorch_model.bin', map_location='cpu' if not torch.cuda.is_available() else None)
         text_generator(state_dict)
