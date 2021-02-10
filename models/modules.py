@@ -130,7 +130,7 @@ class Attention(nn.Module):
 
         if layer_past is not None:  # tensor无法判断真假
             key_past, value_past = layer_past[0], layer_past[1]  # 为什么要添加过去的k,v值,而q不用
-            key = torch.cat((key_past, key), dim=-2)
+            key = torch.cat((key_past, key), dim=-2)  # (batch, head, seq_length, head_features)
             value = torch.cat((value_past, value), dim=-2)
         # Concatenate a sequence of tensors along a new dimension
         present = torch.stack((key, value))
